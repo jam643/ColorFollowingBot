@@ -58,13 +58,13 @@ class colorCircle(object):
     kernel = np.ones((10,10),np.uint8)
     
     def __init__(self,hsvLimits):
-    """initial function call upon object creation
-    
-    Parameters
-    ----------
-    hsvLimits
-        color range to be tracked    
-    """
+        """initial function call upon object creation
+        
+        Parameters
+        ----------
+        hsvLimits
+            color range to be tracked    
+        """
         # initialize variables
         self.center = None
         self.radius = None
@@ -72,14 +72,27 @@ class colorCircle(object):
         self.openeing = None
         self.hsvLimits = hsvLimits
     def update(self,hsv):
+        """Update location of bounding circle
+        
+        Parameters
+        ----------
+        hsv
+            current image in hsv colorspace    
+        """
+        # initialize center of bounding circle
         self.center = None
+        # create masked image based on hsv limits
         if self.hsvLimits[0][0] > self.hsvLimits[1][0]:
+            # creates two masks due to cylindrical nature of hsv
             mask1 = cv2.inRange(hsv, self.hsvLimits[0], np.insert(self.hsvLimits[1][1:3],0,180))
             mask2 = cv2.inRange(hsv, np.insert(self.hsvLimits[0][1:3],0,0), self.hsvLimits[1])
+            # combine masks
             self.mask = mask1 | mask2
         else:
+            # create mask
             self.mask = cv2.inRange(hsv, self.hsvLimits[0], self.hsvLimits[1])
             
+        # reduce noise and fill in gaps in mask
         self.opening = cv2.morphologyEx(self.mask, cv2.MORPH_OPEN, self.kernel)
         #opening = cv2.morphologyEx(opening, cv2.MORPH_CLOSE, kernel2)
         
@@ -97,21 +110,41 @@ class colorCircle(object):
             M = cv2.moments(c)
             center = (int(M["m10"] / M["m00"]), int(M["m01"] / M["m00"]))
             
+            # only recognize if larger than min size
             if self.radius > self.minRad:
                 self.center = center
                 
     def draw(self,frame):
+        """Draw bounding circle around tracked color
+        
+        Parameters
+        ----------
+        frame
+            BGR image 
+            
+        Returns
+        ----------
+        frame
+            BGR with bounding circle drawn
+        """
         if self.center:
+            
+            # color of bounding of circle is upper hsv limit
             color = cv2.cvtColor(np.uint8([[self.hsvLimits[1]]]),
                                  cv2.COLOR_HSV2BGR)[0][0]
+            # draw bounding circle
             cv2.circle(frame, 
                        (int(self.center[0]),
                         int(self.center[1])),
                         int(self.radius),
                         (int(color[0]),int(color[1]),int(color[2])),
                         2)
+                       
+            # color of center point is lower hsv limit
             color = cv2.cvtColor(np.uint8([[self.hsvLimits[0]]]),
                                  cv2.COLOR_HSV2BGR)[0][0]
+                                 
+            # draw center point
             cv2.circle(frame, 
                        self.center, 
                        5,
