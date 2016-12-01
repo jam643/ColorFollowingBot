@@ -11,11 +11,10 @@ import cv2
 def main():
     """Main Function"""
     # define global 
-    global hsv, circleObjects
+    global hsv
     # create video capture object using webcam
     cap = cv2.VideoCapture(0)
-    # initialize list to contain colored objects to be tracked
-    circleObjects = []
+    robot = robotPose()
 
     # main loop
     while(True):
@@ -30,7 +29,7 @@ def main():
             hsv =  cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
             
             # update and draws tracking circle for each color being tracked
-            for idx, object in enumerate(circleObjects):
+            for idx, object in enumerate(colorCircle.circleObjects):
                 # update position of tracking circle
                 object.update(hsv)
                 # redraw tracking circle
@@ -38,6 +37,9 @@ def main():
                 # draw all binary images masking tracked color
                 cv2.imshow('frame'+str(idx),object.opening)
             
+            robot.update(colorCircle)
+            frame = robot.draw(frame)
+                        
             cv2.imshow('frame',frame)
             # attach callback function upon mouse click
             cv2.setMouseCallback('frame',getHsv)
@@ -51,7 +53,8 @@ def main():
 
 class colorCircle(object):
     """Object that tracks selected color and draws bounding circle"""
-    
+    # initialize list to contain colored objects to be tracked
+    circleObjects = []
     # minimum pixel size to be tracked
     minRad = 10
     # kernel size to reduce image noise
@@ -80,7 +83,7 @@ class colorCircle(object):
             current image in hsv colorspace    
         """
         # initialize center of bounding circle
-        self.center = None
+        self.center = (np.nan,np.nan)
         # create masked image based on hsv limits
         if self.hsvLimits[0][0] > self.hsvLimits[1][0]:
             # creates two masks due to cylindrical nature of hsv
@@ -108,7 +111,7 @@ class colorCircle(object):
             c = max(cnts, key=cv2.contourArea)
             ((x, y), self.radius) = cv2.minEnclosingCircle(c)
             M = cv2.moments(c)
-            center = (int(M["m10"] / M["m00"]), int(M["m01"] / M["m00"]))
+            center = [int(M["m10"] / M["m00"]), int(M["m01"] / M["m00"])]
             
             # only recognize if larger than min size
             if self.radius > self.minRad:
@@ -127,7 +130,7 @@ class colorCircle(object):
         frame
             BGR with bounding circle drawn
         """
-        if self.center:
+        if not np.isnan(self.center).any():
             
             # color of bounding of circle is upper hsv limit
             color = cv2.cvtColor(np.uint8([[self.hsvLimits[1]]]),
@@ -146,14 +149,41 @@ class colorCircle(object):
                                  
             # draw center point
             cv2.circle(frame, 
-                       self.center, 
+                       tuple(self.center), 
                        5,
                        (int(color[0]),
                         int(color[1]),
                         int(color[2])), 
                         -1)
         return frame
-
+        
+class robotPose(object):
+    def __init__(self):
+        self.center = []
+        self.theta = []
+        
+    def update(self,colorCircle):
+        self.centers = []
+        for object in colorCircle.circleObjects:
+            self.centers.append(object.center)
+        self.centers = np.asarray(self.centers)
+            
+        if len(self.centers) > 1 and not np.isnan(self.centers).any():
+            self.center = np.average(self.centers,axis=0)
+            print self.center
+            self.theta = np.arctan2(self.centers[1,1]-self.centers[0,1],self.centers[1,0]-self.centers[0,0])
+    def draw(self,frame):
+        if len(self.centers) > 1 and not np.isnan(self.centers).any():
+            vertices = np.array([[0.5,0],[-0.5,0.2],[-0.5,-0.2]]).transpose()
+            scale = np.linalg.norm(self.centers[1,:]-self.centers[0,:])
+            vertices = transform(vertices,self.theta,scale,self.center)
+            print vertices
+            vertices = np.asarray(vertices,np.int32).transpose().reshape((-1,1,2))
+            print vertices
+            cv2.polylines(frame,[vertices],True,(255,255,255),thickness = 4)
+            cv2.putText(frame,"(x,y,theta) = (" + str(int(self.center[0])) + ',' + str(int(self.center[1])) + ',' + str(int(self.theta*180/np.pi)) + ')', (0,20), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255,255,255),2)
+        return frame
+  
 def getHsv(event,x,y,flags,param):
     """Callback function that creates circle object that tracks selected color
     upon left click from user
@@ -172,15 +202,15 @@ def getHsv(event,x,y,flags,param):
         params passed by OpenCV
     
     """
-    global hsv, circleObjects
+    global hsv
 
     # checks if event wasa left click and that there haven't been more than max
     # allowable circle objects to be tracked
-    if event == cv2.EVENT_LBUTTONDOWN and len(circleObjects) < 5:
+    if event == cv2.EVENT_LBUTTONDOWN and len(colorCircle.circleObjects) < 2:
         # hsv color at clicked location
         color = hsv[y][x]
         # allowable +/- variation in hue, saturation, and value respectively
-        spread = [20,50,50]
+        spread = [15,60,60]
         # calculate lower and upper hsv limits to be tracked
         colorLower = [color[0]-spread[0],max(0,color[1]-spread[1]),max(0,color[2]-spread[2])]
         colorUpper = [color[0]+spread[0],min(255,color[1]+spread[1]),min(255,color[2]+spread[2])]
@@ -194,8 +224,15 @@ def getHsv(event,x,y,flags,param):
         # create new circle object that will track the color in colorRange
         object = colorCircle(colorRange)
         # add circle object to list of objects
-        circleObjects.append(object)
+        colorCircle.circleObjects.append(object)
         
+def transform(r,theta,scale,center):
+    R = np.array([[np.cos(theta),-np.sin(theta)],[np.sin(theta),np.cos(theta)]])
+    r = scale*np.dot(R,r)
+    print r
+    for idx, column in enumerate(r.T):
+        r[:,idx] = r[:,idx] + center.T
+    return r
 
 if __name__ == "__main__":
     main()
