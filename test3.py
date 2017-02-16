@@ -1,4 +1,5 @@
 # -*- coding: utf-8 -*-
+#!/usr/bin/env python
 """
 Created on Sat Nov 12 15:52:06 2016
 
@@ -6,49 +7,43 @@ Created on Sat Nov 12 15:52:06 2016
 """
 from picamera.array import PiRGBArray
 from picamera import PiCamera
-import time
 import numpy as np
 import cv2
+import PCA9685 as servo
+import time
 
 def main():
     """Main Function"""
     # define global
     global hsv
-    # create video capture object using webcam
-    #cap = cv2.VideoCapture(0)
     # initialize the camera and grab a reference to the raw camera capture
     camera = PiCamera()
     camera.resolution = (640, 480)
-    camera.framerate = 30
-##    camera.sharpness = 0
-##    camera.contrast = 0
-    camera.brightness = 60
-    camera.saturation = 0
-##    camera.ISO = 0
-##    camera.video_stabilization = False
-##    camera.exposure_compensation = 0
-##    camera.exposure_mode = 'fixedfps'
-##    camera.meter_mode = 'average'
-    camera.awb_mode = 'shade'
-##    camera.image_effect = 'none'
-    camera.color_effects = None
-##    camera.rotation = 0
-##    camera.hflip = False
-##    camera.vflip = False
-##    camera.crop = (0.0, 0.0, 1.0, 1.0)
+    camera.framerate = 60    # create video capture object using webcam
+    cap = cv2.VideoCapture(0)
     rawCapture = PiRGBArray(camera, size=(640, 480))
-    # allow the camera to warmup
     time.sleep(0.1)
-    time_prev = time.time()
 
-    robot = robotPose()
+    MinPulse = 200
+    MaxPulse = 700
+    pwm = servo.PWM()
+    pwm.frequency = 60
+
+    omega2 = 0
+    theta2 = (MinPulse+MaxPulse)/2
+    omega1 = 0
+    theta1 = (MinPulse+MaxPulse)/2
+    k = 0.03
+    pwm.write(15,0,theta2)
+    pwm.write(14,0,theta1)
+    pwm.write(0,0,theta1)
+    width = 640
+    height = 480
 
     # main loop
     for img in camera.capture_continuous(rawCapture, format="bgr", use_video_port=True):
         # Capture webcam image
-        # ret, frame = cap.read()
         frame = img.array
-
         # convert bgr image to hsv
         hsv =  cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
 
@@ -56,13 +51,24 @@ def main():
         for idx, object in enumerate(colorCircle.circleObjects):
             # update position of tracking circle
             object.update(hsv)
+            error_theta = np.subtract(object.center,[width/2,height/2])
+            if abs(error_theta[1]) < 50:
+                error_theta[1] = 0
+            if abs(error_theta[0]) < 50:
+                error_theta[0] = 0
+            omega2 = k*error_theta[1]
+            omega1 = k*error_theta[0]
+            if np.isnan(omega2):
+                pass
+            else:
+                theta1 += omega1
+                theta1 = int(theta1)
+                theta2 += omega2
+                theta2 = int(theta2)
+            pwm.write(14,0,theta1)
+            pwm.write(15,0,theta2)
             # redraw tracking circle
             object.draw(frame)
-            # draw all binary images masking tracked color
-            #cv2.imshow('frame'+str(idx),object.opening)
-
-        robot.update(colorCircle)
-        frame = robot.draw(frame)
 
         cv2.imshow('frame',frame)
         # attach callback function upon mouse click
@@ -70,10 +76,6 @@ def main():
 
         # clear the stream in preparation for the next frame
 	rawCapture.truncate(0)
-
-	fps = 1.0/(time.time()-time_prev)
-	print str(fps)
-	time_prev = time.time()
 
         # quit if 'q' key is pressed
         if cv2.waitKey(1) & 0xFF == ord('q'):
@@ -187,30 +189,6 @@ class colorCircle(object):
                         -1)
         return frame
 
-class robotPose(object):
-    def __init__(self):
-        self.center = []
-        self.theta = []
-
-    def update(self,colorCircle):
-        self.centers = []
-        for object in colorCircle.circleObjects:
-            self.centers.append(object.center)
-        self.centers = np.asarray(self.centers)
-
-        if len(self.centers) > 1 and not np.isnan(self.centers).any():
-            self.center = np.average(self.centers,axis=0)
-            self.theta = np.arctan2(self.centers[1,1]-self.centers[0,1],self.centers[1,0]-self.centers[0,0])
-    def draw(self,frame):
-        if len(self.centers) > 1 and not np.isnan(self.centers).any():
-            vertices = np.array([[0.5,0],[-0.5,0.2],[-0.5,-0.2]]).transpose()
-            scale = np.linalg.norm(self.centers[1,:]-self.centers[0,:])
-            vertices = transform(vertices,self.theta,scale,self.center)
-            vertices = np.asarray(vertices,np.int32).transpose().reshape((-1,1,2))
-            cv2.polylines(frame,[vertices],True,(255,255,255),thickness = 4)
-            cv2.putText(frame,"(x,y,theta) = (" + str(int(self.center[0])) + ',' + str(int(self.center[1])) + ',' + str(int(self.theta*180/np.pi)) + ')', (0,20), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255,255,255),2)
-        return frame
-
 def getHsv(event,x,y,flags,param):
     """Callback function that creates circle object that tracks selected color
     upon left click from user
@@ -233,11 +211,11 @@ def getHsv(event,x,y,flags,param):
 
     # checks if event wasa left click and that there haven't been more than max
     # allowable circle objects to be tracked
-    if event == cv2.EVENT_LBUTTONDOWN and len(colorCircle.circleObjects) < 2:
+    if event == cv2.EVENT_LBUTTONDOWN and len(colorCircle.circleObjects) < 1:
         # hsv color at clicked location
         color = hsv[y][x]
         # allowable +/- variation in hue, saturation, and value respectively
-        spread = [15,60,60]
+        spread = [30,80,80]
         # calculate lower and upper hsv limits to be tracked
         colorLower = [color[0]-spread[0],max(0,color[1]-spread[1]),max(0,color[2]-spread[2])]
         colorUpper = [color[0]+spread[0],min(255,color[1]+spread[1]),min(255,color[2]+spread[2])]
@@ -252,13 +230,6 @@ def getHsv(event,x,y,flags,param):
         object = colorCircle(colorRange)
         # add circle object to list of objects
         colorCircle.circleObjects.append(object)
-
-def transform(r,theta,scale,center):
-    R = np.array([[np.cos(theta),-np.sin(theta)],[np.sin(theta),np.cos(theta)]])
-    r = scale*np.dot(R,r)
-    for idx, column in enumerate(r.T):
-        r[:,idx] = r[:,idx] + center.T
-    return r
 
 if __name__ == "__main__":
     main()
