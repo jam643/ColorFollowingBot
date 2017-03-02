@@ -8,28 +8,35 @@ Created on Sat Nov 12 15:52:06 2016
 
 import numpy as np
 import cv2
-import PCA9685 as servo
 import time
+import sys
 
-def main():
+try:
+    import PCA9685 as servo
+    existServo = True
+except:
+    existServo = False
+
+def main(stream = True):
     """Main Function"""
     # define global
     global hsv
     # create video capture object using webcam
     cap = cv2.VideoCapture(0)
 
-    MinPulse = 200
-    MaxPulse = 700
-    pwm = servo.PWM()
-    pwm.frequency = 60
+    if existServo:
+        MinPulse = 200
+        MaxPulse = 700
+        pwm = servo.PWM()
+        pwm.frequency = 60
 
-    omega2 = 0
-    theta2 = (MinPulse+MaxPulse)/2
-    omega1 = 0
-    theta1 = (MinPulse+MaxPulse)/2
-    k = 0.03
-    pwm.write(15,0,theta2)
-    pwm.write(14,0,theta1)
+        omega2 = 0
+        theta2 = (MinPulse+MaxPulse)/2
+        omega1 = 0
+        theta1 = (MinPulse+MaxPulse)/2
+        k = 0.03
+        pwm.write(15,0,theta2)
+        pwm.write(14,0,theta1)
 
     # main loop
     while(True):
@@ -38,7 +45,7 @@ def main():
 
         # determine if frame contains an image
         if not ret:
-            print "NO IMAGE!"
+            pass
         else:
             height, width, channels = frame.shape
             # convert bgr image to hsv
@@ -48,26 +55,28 @@ def main():
             for idx, object in enumerate(colorCircle.circleObjects):
                 # update position of tracking circle
                 object.update(hsv)
-                error_theta = np.subtract(object.center,[width/2,height/2])
-                if abs(error_theta[1]) < 50:
-                    error_theta[1] = 0
-                if abs(error_theta[0]) < 50:
-                    error_theta[0] = 0
-                omega2 = -k*error_theta[1]
-                omega1 = -k*error_theta[0]
-                if np.isnan(omega2):
-                    pass
-                else:
-                    theta1 += omega1
-                    theta1 = int(theta1)
-                    theta2 += omega2
-                    theta2 = int(theta2)
-                pwm.write(14,0,theta1)
-                pwm.write(15,0,theta2)
+                if existServo:
+                    error_theta = np.subtract(object.center,[width/2,height/2])
+                    if abs(error_theta[1]) < 50:
+                        error_theta[1] = 0
+                    if abs(error_theta[0]) < 50:
+                        error_theta[0] = 0
+                    omega2 = -k*error_theta[1]
+                    omega1 = -k*error_theta[0]
+                    if np.isnan(omega2):
+                        pass
+                    else:
+                        theta1 += omega1
+                        theta1 = int(theta1)
+                        theta2 += omega2
+                        theta2 = int(theta2)
+                    pwm.write(14,0,theta1)
+                    pwm.write(15,0,theta2)
+
                 # redraw tracking circle
                 object.draw(frame)
-
-            cv2.imshow('frame',frame)
+            if stream:
+                cv2.imshow('frame',frame)
             # attach callback function upon mouse click
             cv2.setMouseCallback('frame',getHsv)
 
@@ -121,14 +130,13 @@ class colorCircle(object):
         else:
             # create mask
             self.mask = cv2.inRange(hsv, self.hsvLimits[0], self.hsvLimits[1])
-        self.opening = self.mask
         # reduce noise and fill in gaps in mask
         # self.opening = cv2.morphologyEx(self.mask, cv2.MORPH_OPEN, self.kernel)
         #opening = cv2.morphologyEx(opening, cv2.MORPH_CLOSE, kernel2)
 
         # find contours in the mask and initialize the current
         # (x, y) center of the ball
-        cnts = cv2.findContours(self.opening.copy(), cv2.RETR_EXTERNAL,
+        cnts = cv2.findContours(self.mask.copy(), cv2.RETR_EXTERNAL,
     		cv2.CHAIN_APPROX_SIMPLE)[-2]
         # only proceed if at least one contour was found
         if len(cnts) > 0:
@@ -138,7 +146,8 @@ class colorCircle(object):
             c = max(cnts, key=cv2.contourArea)
             ((x, y), self.radius) = cv2.minEnclosingCircle(c)
             M = cv2.moments(c)
-            center = [int(M["m10"] / M["m00"]), int(M["m01"] / M["m00"])]
+            if not M["m00"] == 0:
+                center = [int(M["m10"] / M["m00"]), int(M["m01"] / M["m00"])]
 
             # only recognize if larger than min size
             if self.radius > self.minRad:
@@ -227,4 +236,7 @@ def getHsv(event,x,y,flags,param):
         colorCircle.circleObjects.append(object)
 
 if __name__ == "__main__":
-    main()
+    if len(sys.argv) == 2:
+        main(bool(int(sys.argv[1])))
+    else:
+        main() 
