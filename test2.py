@@ -74,9 +74,11 @@ def main(stream = True):
                     pwm.write(15,0,theta2)
 
                 # redraw tracking circle
-                object.draw(frame)
-            if stream:
+                if stream:
+                    object.draw(frame)
+            if len(colorCircle.circleObjects) == 0 or stream:
                 cv2.imshow('frame',frame)
+                
             # attach callback function upon mouse click
             cv2.setMouseCallback('frame',getHsv)
 
