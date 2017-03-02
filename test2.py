@@ -53,7 +53,7 @@ def main():
                     error_theta[1] = 0
                 if abs(error_theta[0]) < 50:
                     error_theta[0] = 0
-                omega2 = k*error_theta[1]
+                omega2 = -k*error_theta[1]
                 omega1 = -k*error_theta[0]
                 if np.isnan(omega2):
                     pass
@@ -121,9 +121,9 @@ class colorCircle(object):
         else:
             # create mask
             self.mask = cv2.inRange(hsv, self.hsvLimits[0], self.hsvLimits[1])
-
+        self.opening = self.mask
         # reduce noise and fill in gaps in mask
-        self.opening = cv2.morphologyEx(self.mask, cv2.MORPH_OPEN, self.kernel)
+        # self.opening = cv2.morphologyEx(self.mask, cv2.MORPH_OPEN, self.kernel)
         #opening = cv2.morphologyEx(opening, cv2.MORPH_CLOSE, kernel2)
 
         # find contours in the mask and initialize the current
