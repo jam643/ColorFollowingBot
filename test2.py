@@ -10,7 +10,6 @@ import numpy as np
 import cv2
 import time
 import sys
-import imutils
 
 try:
     import PCA9685 as servo
@@ -49,7 +48,7 @@ def main(stream = True):
             pass
         else:
             # resize the frame
-            frame = imutils.resize(frame, width=300)
+            frame = cv2.resize(frame, (0,0), fx=0.5, fy=0.5)
 
             height, width, channels = frame.shape
             # convert bgr image to hsv
