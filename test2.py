@@ -10,6 +10,7 @@ import numpy as np
 import cv2
 import time
 import sys
+import imutils
 
 try:
     import PCA9685 as servo
@@ -47,12 +48,15 @@ def main(stream = True):
         if not ret:
             pass
         else:
+            # resize the frame
+            frame = imutils.resize(frame, width=300)
+
             height, width, channels = frame.shape
             # convert bgr image to hsv
             hsv =  cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
 
             # update and draws tracking circle for each color being tracked
-            for idx, object in enumerate(colorCircle.circleObjects):
+            for idx, object in enumerate(colorCircle.instances):
                 # update position of tracking circle
                 object.update(hsv)
                 if existServo:
@@ -76,7 +80,8 @@ def main(stream = True):
                 # redraw tracking circle
                 if stream:
                     object.draw(frame)
-            if len(colorCircle.circleObjects) == 0 or stream:
+                    cv2.imshow('frame2',object.mask)
+            if not colorCircle.instances or stream:
                 cv2.imshow('frame',frame)
                 
             # attach callback function upon mouse click
@@ -91,12 +96,10 @@ def main(stream = True):
 
 class colorCircle(object):
     """Object that tracks selected color and draws bounding circle"""
-    # initialize list to contain colored objects to be tracked
-    circleObjects = []
+
     # minimum pixel size to be tracked
-    minRad = 10
-    # kernel size to reduce image noise
-    kernel = np.ones((10,10),np.uint8)
+    minRad = 4
+    instances = []
 
     def __init__(self,hsvLimits):
         """initial function call upon object creation
@@ -110,8 +113,9 @@ class colorCircle(object):
         self.center = None
         self.radius = None
         self.mask = None
-        self.openeing = None
         self.hsvLimits = hsvLimits
+        colorCircle.instances.append(self)
+
     def update(self,hsv):
         """Update location of bounding circle
 
@@ -120,8 +124,10 @@ class colorCircle(object):
         hsv
             current image in hsv colorspace
         """
-        # initialize center of bounding circle
+        # initialize center and radius of bounding circle
         self.center = (np.nan,np.nan)
+        self.radius = np.nan
+
         # create masked image based on hsv limits
         if self.hsvLimits[0][0] > self.hsvLimits[1][0]:
             # creates two masks due to cylindrical nature of hsv
@@ -132,9 +138,6 @@ class colorCircle(object):
         else:
             # create mask
             self.mask = cv2.inRange(hsv, self.hsvLimits[0], self.hsvLimits[1])
-        # reduce noise and fill in gaps in mask
-        # self.opening = cv2.morphologyEx(self.mask, cv2.MORPH_OPEN, self.kernel)
-        #opening = cv2.morphologyEx(opening, cv2.MORPH_CLOSE, kernel2)
 
         # find contours in the mask and initialize the current
         # (x, y) center of the ball
@@ -145,15 +148,18 @@ class colorCircle(object):
             # find the largest contour in the mask, then use
             # it to compute the minimum enclosing circle and
             # centroid
-            c = max(cnts, key=cv2.contourArea)
-            ((x, y), self.radius) = cv2.minEnclosingCircle(c)
-            M = cv2.moments(c)
-            if not M["m00"] == 0:
-                center = [int(M["m10"] / M["m00"]), int(M["m01"] / M["m00"])]
+            maxCnt = max(cnts, key=cv2.contourArea)
+            ((x, y), radius) = cv2.minEnclosingCircle(maxCnt)
+
+            ## get area info
+            # M = cv2.moments(maxCnt)
 
             # only recognize if larger than min size
-            if self.radius > self.minRad:
-                self.center = center
+            if radius > self.minRad:
+                # set center and radius of object
+                # self.center = [int(M["m10"] / M["m00"]), int(M["m01"] / M["m00"])]
+                self.center = [int(x),int(y)]
+                self.radius = radius
 
     def draw(self,frame):
         """Draw bounding circle around tracked color
@@ -214,10 +220,9 @@ def getHsv(event,x,y,flags,param):
 
     """
     global hsv
-
     # checks if event wasa left click and that there haven't been more than max
     # allowable circle objects to be tracked
-    if event == cv2.EVENT_LBUTTONDOWN and len(colorCircle.circleObjects) < 1:
+    if event == cv2.EVENT_LBUTTONDOWN and len(colorCircle.instances) < 1:
         # hsv color at clicked location
         color = hsv[y][x]
         # allowable +/- variation in hue, saturation, and value respectively
@@ -233,9 +238,7 @@ def getHsv(event,x,y,flags,param):
         # add lower and upper hsv limits to array
         colorRange = np.asarray([colorLower, colorUpper])
         # create new circle object that will track the color in colorRange
-        object = colorCircle(colorRange)
-        # add circle object to list of objects
-        colorCircle.circleObjects.append(object)
+        colorCircle(colorRange)
 
 if __name__ == "__main__":
     if len(sys.argv) == 2:
