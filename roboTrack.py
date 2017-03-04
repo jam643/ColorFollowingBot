@@ -49,7 +49,7 @@ def main(stream = True):
                 # update position of tracking circle
                 colorObject.update(hsv)
                 if existServo:
-                    servoController.update(colorObject
+                    servoController.update(colorObject)
 
                 # redraw tracking circle
                 if stream:
@@ -202,37 +202,35 @@ class servoClass(object):
                     offset_y = int(line[11:-1])
         except:
             pass
-        self.theta_X_min = MinPulse + offset_x
-        self.theta_X_max = MaxPulse + offset_x
-        self.theta_Y_min = MinPulse + offset_y
-        self.theta_Y_max = MaxPulse + offset_y
+        self.theta_X_min = self.MinPulse + offset_x
+        self.theta_X_max = self.MaxPulse + offset_x
+        self.theta_Y_min = self.MinPulse + offset_y
+        self.theta_Y_max = self.MaxPulse + offset_y
 
-        self.theta_X = (self.theta_X_max - self.theta_X_min)/2
-        self.theta_Y = (self.theta_Y_max - self.theta_Y_min)/2
+        self.theta_X = (self.theta_X_max + self.theta_X_min)/2
+        self.theta_Y = (self.theta_Y_max + self.theta_Y_min)/2
 
         self.omega_X = 0
         self.omega_Y = 0
 
-        self.pwm.write(SERVO_X,0,self.theta_X)
-        self.pwm.write(SERVO_Y,0,self.theta_Y)
+        self.pwm.write(self.SERVO_X,0,self.theta_X)
+        self.pwm.write(self.SERVO_Y,0,self.theta_Y)
 
     def update(self,colorObject):
         global width, height
+        
         error_theta_X,error_theta_Y = np.subtract(colorObject.center,[width/2,height/2])
         if abs(error_theta_Y) < height/15:
             error_theta_Y = 0
         if abs(error_theta_X) < width/15:
             error_theta_X = 0
-        self.omega_Y = -k*error_theta_Y
-        self.omega_X = -k*error_theta_X
-        try:
+        self.omega_Y = -self.k*error_theta_Y
+        self.omega_X = -self.k*error_theta_X
+        if not np.isnan(self.omega_X):
             self.theta_X += self.omega_X
             self.theta_Y += self.omega_Y
-            pwm.write(SERVO_X,0,int(self.theta_X))
-            pwm.write(SERVO_Y,0,int(self.theta_Y))
-        except: 
-            pass
-
+            self.pwm.write(self.SERVO_X,0,int(self.theta_X))
+            self.pwm.write(self.SERVO_Y,0,int(self.theta_Y))
 
 def getHsv(event,x,y,flags,param):
     """Callback function that creates circle object that tracks selected color
