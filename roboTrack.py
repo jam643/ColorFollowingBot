@@ -25,21 +25,11 @@ def main(stream = True):
     cap = cv2.VideoCapture(0)
 
     if existServo:
-        MinPulse = 200
-        MaxPulse = 700
-        pwm = servo.PWM()
-        pwm.frequency = 60
-
-        omega2 = 0
-        theta2 = (MinPulse+MaxPulse)/2
-        omega1 = 0
-        theta1 = (MinPulse+MaxPulse)/2
-        k = 0.06
-        pwm.write(15,0,theta2)
-        pwm.write(14,0,theta1)
+        servoController = servoClass()
 
     # main loop
     while(True):
+        global width, height
         # Capture webcam image
         ret, frame = cap.read()
 
@@ -55,32 +45,18 @@ def main(stream = True):
             hsv =  cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
 
             # update and draws tracking circle for each color being tracked
-            for idx, object in enumerate(colorCircle.instances):
+            for idx, colorObject in enumerate(colorTracker.instances):
                 # update position of tracking circle
-                object.update(hsv)
+                colorObject.update(hsv)
                 if existServo:
-                    error_theta = np.subtract(object.center,[width/2,height/2])
-                    if abs(error_theta[1]) < height/15:
-                        error_theta[1] = 0
-                    if abs(error_theta[0]) < width/15:
-                        error_theta[0] = 0
-                    omega2 = -k*error_theta[1]
-                    omega1 = -k*error_theta[0]
-                    if np.isnan(omega2):
-                        pass
-                    else:
-                        theta1 += omega1
-                        theta1 = int(theta1)
-                        theta2 += omega2
-                        theta2 = int(theta2)
-                    pwm.write(14,0,theta1)
-                    pwm.write(15,0,theta2)
+                    servoController.update(colorObject
 
                 # redraw tracking circle
                 if stream:
-                    object.draw(frame)
-                    cv2.imshow('frame2',object.mask)
-            if not colorCircle.instances or stream:
+                    colorObject.draw(frame)
+                    cv2.imshow('frame2',colorObject.mask)
+
+            if not colorTracker.instances or stream:
                 cv2.imshow('frame',frame)
                 
             # attach callback function upon mouse click
@@ -93,7 +69,7 @@ def main(stream = True):
     cap.release()
     cv2.destroyAllWindows()
 
-class colorCircle(object):
+class colorTracker(object):
     """Object that tracks selected color and draws bounding circle"""
 
     # minimum pixel size to be tracked
@@ -113,7 +89,7 @@ class colorCircle(object):
         self.radius = None
         self.mask = None
         self.hsvLimits = hsvLimits
-        colorCircle.instances.append(self)
+        colorTracker.instances.append(self)
 
     def update(self,hsv):
         """Update location of bounding circle
@@ -200,6 +176,64 @@ class colorCircle(object):
                         -1)
         return frame
 
+class servoClass(object):
+    """Controls servo"""
+
+    # max and min pulses corresponding to servo extremes
+    MinPulse = 200
+    MaxPulse = 700
+    # servo port numbers
+    SERVO_X = 14
+    SERVO_Y = 15
+    # proportional controller constant
+    k = 0.06
+
+    def __init__(self):
+        self.pwm = servo.PWM()
+        self.pwm.frequency = 60
+
+        offset_x = 0
+        offset_y = 0
+        try:
+            for line in open('config'):
+                if line[0:8] == 'offset_x':
+                    offset_x = int(line[11:-1])
+                if line[0:8] == 'offset_y':
+                    offset_y = int(line[11:-1])
+        except:
+            pass
+        self.theta_X_min = MinPulse + offset_x
+        self.theta_X_max = MaxPulse + offset_x
+        self.theta_Y_min = MinPulse + offset_y
+        self.theta_Y_max = MaxPulse + offset_y
+
+        self.theta_X = (self.theta_X_max - self.theta_X_min)/2
+        self.theta_Y = (self.theta_Y_max - self.theta_Y_min)/2
+
+        self.omega_X = 0
+        self.omega_Y = 0
+
+        self.pwm.write(SERVO_X,0,self.theta_X)
+        self.pwm.write(SERVO_Y,0,self.theta_Y)
+
+    def update(self,colorObject):
+        global width, height
+        error_theta_X,error_theta_Y = np.subtract(colorObject.center,[width/2,height/2])
+        if abs(error_theta_Y) < height/15:
+            error_theta_Y = 0
+        if abs(error_theta_X) < width/15:
+            error_theta_X = 0
+        self.omega_Y = -k*error_theta_Y
+        self.omega_X = -k*error_theta_X
+        try:
+            self.theta_X += self.omega_X
+            self.theta_Y += self.omega_Y
+            pwm.write(SERVO_X,0,int(self.theta_X))
+            pwm.write(SERVO_Y,0,int(self.theta_Y))
+        except: 
+            pass
+
+
 def getHsv(event,x,y,flags,param):
     """Callback function that creates circle object that tracks selected color
     upon left click from user
@@ -239,13 +273,14 @@ def getHsv(event,x,y,flags,param):
         
         # create new circle object that will track the color in colorRange
         # if object already created, update tracking color
-        if colorCircle.instances:
-            colorCircle.instances[-1].hsvLimits = colorRange
+        if colorTracker.instances:
+            colorTracker.instances[-1].hsvLimits = colorRange
         else:
         # create new object
-            colorCircle(colorRange)
+            colorTracker(colorRange)
 
 if __name__ == "__main__":
+    # run program with or without video to improve efficiency
     if len(sys.argv) == 2:
         main(bool(int(sys.argv[1])))
     else:
