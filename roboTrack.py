@@ -10,6 +10,7 @@ import numpy as np
 import cv2
 import time
 import sys
+import RPi.GPIO as GPIO
 
 try:
     import PCA9685 as servo
@@ -58,7 +59,7 @@ def main(stream = True):
 
             if not colorTracker.instances or stream:
                 cv2.imshow('frame',frame)
-                
+
             # attach callback function upon mouse click
             cv2.setMouseCallback('frame',getHsv)
 
@@ -67,7 +68,10 @@ def main(stream = True):
             break
     # When everything done, release the capture
     cap.release()
+    # destroy windows
     cv2.destroyAllWindows()
+    # release servos
+    servoController.kill()
 
 class colorTracker(object):
     """Object that tracks selected color and draws bounding circle"""
@@ -182,9 +186,22 @@ class servoClass(object):
     # max and min pulses corresponding to servo extremes
     MinPulse = 200
     MaxPulse = 700
+    CenterPulse = 450
     # servo port numbers
     SERVO_X = 14
     SERVO_Y = 15
+    SERVO_STEER = 0
+
+    Motor0_A = 11
+    Motor0_B = 12
+    Motor1_A = 13
+    Motor1_B = 15
+
+    EN_M0 = 4
+    EN_M1 = 5
+
+    pins = [Motor0_A, Motor0_B, Motor1_A, Motor1_B]
+    
     # proportional controller constant
     k = 0.06
 
@@ -192,45 +209,113 @@ class servoClass(object):
         self.pwm = servo.PWM()
         self.pwm.frequency = 60
 
-        offset_x = 0
-        offset_y = 0
+        self.offset_x = 0
+        self.offset_y = 0
+        self.offset_steer = 0
+        self.forward0 = 'True'
+        self.forward1 = 'True'
+        GPIO.setwarnings(False)
+        GPIO.setmode(GPIO.BOARD)
+
+        for pin in self.pins:
+            GPIO.setup(pin, GPIO.OUT)
+            
         try:
             for line in open('config'):
                 if line[0:8] == 'offset_x':
-                    offset_x = int(line[11:-1])
+                    self.offset_x = int(line[11:-1])
                 if line[0:8] == 'offset_y':
-                    offset_y = int(line[11:-1])
+                    self.offset_y = int(line[11:-1])
+                if line[0:8] == 'offset =':
+                    self.offset_steer = int(line[9:-1])
+                if line[0:8] == 'forward0':
+                    self.forward0 = line[11:-1]
+                if line[0:8] == 'forward1':
+                    self.forward1 = line[11:-1]
         except:
             pass
-        self.theta_X_min = self.MinPulse + offset_x
-        self.theta_X_max = self.MaxPulse + offset_x
-        self.theta_Y_min = self.MinPulse + offset_y
-        self.theta_Y_max = self.MaxPulse + offset_y
+        self.theta_X_min = self.MinPulse + self.offset_x
+        self.theta_X_max = self.MaxPulse + self.offset_x
+        self.theta_Y_min = self.MinPulse + self.offset_y
+        self.theta_Y_max = self.MaxPulse + self.offset_y
 
-        self.theta_X = (self.theta_X_max + self.theta_X_min)/2
-        self.theta_Y = (self.theta_Y_max + self.theta_Y_min)/2
+        self.theta_X = self.CenterPulse + self.offset_x
+        self.theta_Y = self.MinPulse + 50
+        self.theta_steer = self.CenterPulse + self.offset_steer
 
         self.omega_X = 0
         self.omega_Y = 0
+        self.omega_steer = 0
 
         self.pwm.write(self.SERVO_X,0,self.theta_X)
         self.pwm.write(self.SERVO_Y,0,self.theta_Y)
+        self.pwm.write(self.SERVO_STEER,0,self.theta_steer)
 
     def update(self,colorObject):
         global width, height
-        
+
         error_theta_X,error_theta_Y = np.subtract(colorObject.center,[width/2,height/2])
         if abs(error_theta_Y) < height/15:
             error_theta_Y = 0
         if abs(error_theta_X) < width/15:
             error_theta_X = 0
-        self.omega_Y = -self.k*error_theta_Y
-        self.omega_X = -self.k*error_theta_X
-        if not np.isnan(self.omega_X):
+        if not np.isnan(error_theta_X):
+            if self.theta_Y > self.CenterPulse + self.offset_y:
+                self.omega_X = self.k*error_theta_X
+            else:
+                self.omega_X = -self.k*error_theta_X
+            self.omega_Y = -self.k*error_theta_Y
             self.theta_X += self.omega_X
             self.theta_Y += self.omega_Y
+            self.theta_X = min(max(self.theta_X,self.MinPulse),self.MaxPulse)
+            self.theta_Y = min(max(self.theta_Y,self.MinPulse),self.MaxPulse)
+            self.theta_steer = np.sin((self.theta_Y-self.offset_y-self.CenterPulse)*np.pi/500)*np.sin((self.theta_X-self.offset_x-self.CenterPulse)*np.pi/500)*80+self.CenterPulse+self.offset_steer
+
+            if (self.theta_Y-self.offset_y-self.CenterPulse) < -50:
+                speed = abs(self.theta_Y-self.offset_y-self.CenterPulse)/(self.CenterPulse+self.offset_y-self.MinPulse)*50
+                self.forward(speed)
+
             self.pwm.write(self.SERVO_X,0,int(self.theta_X))
             self.pwm.write(self.SERVO_Y,0,int(self.theta_Y))
+            self.pwm.write(self.SERVO_STEER,0,int(self.theta_steer))
+        else:
+            self.stop()
+
+    def kill(self):
+        self.pwm.write(self.SERVO_X,0,0)
+        self.pwm.write(self.SERVO_Y,0,0)
+        self.pwm.write(self.SERVO_STEER,0,0)
+        self.stop()
+
+    def motor0(self,x):
+        if x == 'True':
+            GPIO.output(self.Motor0_A, GPIO.LOW)
+            GPIO.output(self.Motor0_B, GPIO.HIGH)
+        elif x == 'False':
+            GPIO.output(self.Motor0_A, GPIO.HIGH)
+            GPIO.output(self.Motor0_B, GPIO.LOW)
+
+    def motor1(self,x):
+        if x == 'True':
+            GPIO.output(self.Motor1_A, GPIO.LOW)
+            GPIO.output(self.Motor1_B, GPIO.HIGH)
+        elif x == 'False':
+            GPIO.output(self.Motor1_A, GPIO.HIGH)
+            GPIO.output(self.Motor1_B, GPIO.LOW)
+
+    def setSpeed(self,speed):
+        speed *= 40
+        self.pwm.write(self.EN_M0,0,speed)
+        self.pwm.write(self.EN_M1,0,speed)
+
+    def forward(self,speed = 50):
+        self.setSpeed(int(speed))
+        self.motor0(self.forward0)
+        self.motor1(self.forward1)
+
+    def stop(self):
+        for pin in self.pins:
+            GPIO.output(pin,GPIO.LOW)
 
 def getHsv(event,x,y,flags,param):
     """Callback function that creates circle object that tracks selected color
@@ -268,7 +353,7 @@ def getHsv(event,x,y,flags,param):
             colorUpper[0] -= 180
         # add lower and upper hsv limits to array
         colorRange = np.asarray([colorLower, colorUpper])
-        
+
         # create new circle object that will track the color in colorRange
         # if object already created, update tracking color
         if colorTracker.instances:
@@ -282,4 +367,4 @@ if __name__ == "__main__":
     if len(sys.argv) == 2:
         main(bool(int(sys.argv[1])))
     else:
-        main() 
+        main()
